@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -13,10 +14,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 )
 
 func main() {
-
+	defer duration(time.Now())
 	imageId := flag.String("ami", "", "The image id for the instance")
 	flag.Parse()
 
@@ -78,15 +80,20 @@ func getSecurityGroup(client *ec2.Client) string {
 	}
 	describeSecurityGroup, err := client.DescribeSecurityGroups(context.TODO(), describeSecurityGroupsInput)
 
-	if err != nil {
-		fmt.Println("Got an error retrieving information about security griop:")
-		fmt.Println(groupName)
-		fmt.Println(err)
-		return ""
+	if err == nil && len(describeSecurityGroup.SecurityGroups) > 0 {
+		return *describeSecurityGroup.SecurityGroups[0].GroupId
 	}
 
-	if len(describeSecurityGroup.SecurityGroups) > 0 {
-		return *describeSecurityGroup.SecurityGroups[0].GroupId
+	if err != nil {
+		var ae smithy.APIError
+		if errors.As(err, &ae) {
+			if ae.ErrorCode() != "InvalidGroup.NotFound" {
+				fmt.Println("Got an error retrieving information about security griop:")
+				fmt.Println(groupName)
+				fmt.Println(err)
+				return ""
+			}
+		}
 	}
 
 	sgInput := &ec2.CreateSecurityGroupInput{
@@ -167,7 +174,7 @@ func waitRunning(client *ec2.Client, instanceId string) string {
 			for _, i := range r.Instances {
 				// running
 				if *i.State.Code == 16 {
-					time.Sleep(3 * time.Second)
+					time.Sleep(7 * time.Second)
 					return "http://" + *i.PublicDnsName
 				}
 				// not pending
@@ -175,7 +182,7 @@ func waitRunning(client *ec2.Client, instanceId string) string {
 					fmt.Println("Got an error creating an instance")
 					return ""
 				}
-				fmt.Println("Still pending...")
+				log.Printf("Still pending...")
 			}
 		}
 		time.Sleep(3 * time.Second)
@@ -200,4 +207,8 @@ func openBrowser(url string) {
 		fmt.Println(err)
 		log.Fatal(err)
 	}
+}
+
+func duration(start time.Time) {
+	log.Printf("Start-up time: %v\n", time.Since(start))
 }
